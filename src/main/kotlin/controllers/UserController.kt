@@ -1,7 +1,6 @@
 package main.kotlin.controllers
 
 import main.kotlin.ext.withUser
-import main.kotlin.model.db.Schedule
 import main.kotlin.model.db.toDataClass
 import main.kotlin.model.dto.EmployeeRequest
 import main.kotlin.model.dto.EmployeeResponse
@@ -16,6 +15,10 @@ import org.http4k.core.HttpHandler
 import org.http4k.core.Method
 import org.http4k.core.then
 import org.http4k.format.Jackson.auto
+import org.http4k.lens.Query
+import org.http4k.lens.int
+import org.http4k.lens.long
+import org.http4k.lens.string
 import org.http4k.routing.RoutingHttpHandler
 import org.http4k.routing.bind
 import org.http4k.routing.routes
@@ -40,6 +43,13 @@ object UserController {
     private val scheduleRequest = Body.auto<ScheduleRequest>().toLens()
     private val scheduleResponse = Body.auto<ScheduleResponse>().toLens()
 
+    ////////////////////////// pagination
+
+    val offsetLens = Query.long().defaulted("offset", 0)
+    val limitLens = Query.int().defaulted("limit", 20)
+    val uuidLens = Query.string().optional("uuid")
+    val uuidRequiredLens = Query.string().required("uuid")
+
     fun routes(): RoutingHttpHandler {
 
         val me: HttpHandler = Filters.AuthFilter.then { request ->
@@ -52,25 +62,29 @@ object UserController {
 
         val employees: HttpHandler = Filters.AuthFilter.then { request ->
             request.withUser { user ->
-                val employees = user.employees.map { employee ->
-                    EmployeeResponse(
-                        employee.uuid.toString(),
-                        employee.weeklyHours,
-                        employee.entryDate?.millis,
-                        employee.firstname,
-                        employee.lastname,
-                        employee.employer.uuid.toString()
-                    )
-                }
+                val offset = offsetLens(request)
+                val limit = limitLens(request)
+
+                val employees = employeeService.getEmployees(user, limit, offset)
 
                 employeesResponse(employees, Responses.OK)
+            }
+        }
+
+        val employee: HttpHandler = Filters.AuthFilter.then { request ->
+            request.withUser { user ->
+                val uuid = uuidRequiredLens(request)
+
+                val employee = employeeService.findByUUID(user, uuid)?.toDataClass()
+
+                if (employee == null) Responses.BAD_REQUEST else employeeResponse(employee, Responses.OK)
             }
         }
 
         val createEmployee: HttpHandler = Filters.AuthFilter.then { request ->
             request.withUser { user ->
                 val fromRequest = employeeRequest(request)
-                val employee = employeeService.create(
+                val employeeResponse = employeeService.create(
                     user,
                     DateTime(fromRequest.entryDate),
                     fromRequest.weeklyHours,
@@ -78,30 +92,36 @@ object UserController {
                     fromRequest.lastname
                 )
 
-                employeeResponse(employee, Responses.OK)
+                employeeResponse(employeeResponse, Responses.OK)
             }
         }
 
         val schedules: HttpHandler = Filters.AuthFilter.then { request ->
-            request.withUser { user ->
-                val schedules = user.employees
-                    .flatMap { employee ->
-                        employee.schedules.map(Schedule::toDataClass)
-                    }
+            request.withUser {user ->
+                val offset = offsetLens(request)
+                val limit = limitLens(request)
+                val employeeUUID = uuidLens(request)
+
+                val schedules = scheduleService.getSchedules(user, employeeUUID, limit, offset)
+
+                // val schedules = user.employees
+                //     .flatMap { employee ->
+                //         employee.schedules.map(Schedule::toDataClass)
+                //     }
 
                 schedulesResponse(schedules, Responses.OK)
             }
         }
 
         val createSchedule: HttpHandler = Filters.AuthFilter.then { request ->
-            request.withUser {
+            request.withUser { user ->
                 val fromRequest = scheduleRequest(request)
 
-                val employee = employeeService.findByUUID(fromRequest.employee)
-                if (employee == null) Responses.BAD_REQUEST
+                val emp = employeeService.findByUUID(user, fromRequest.employee)
+                if (emp == null) Responses.BAD_REQUEST
 
                 val schedule = scheduleService.create(
-                    employee!!,
+                    emp!!,
                     DateTime(fromRequest.scheduleStart),
                     DateTime(fromRequest.scheduleEnd)
                 )
@@ -113,6 +133,7 @@ object UserController {
         return routes(
             "/user" bind Method.GET to me,
             "/employee/list" bind Method.GET to employees,
+            "/employee/single" bind Method.GET to employee,
             "/employee/create" bind Method.POST to createEmployee,
             "/schedule/list" bind Method.GET to schedules,
             "/schedule/create" bind Method.POST to createSchedule
