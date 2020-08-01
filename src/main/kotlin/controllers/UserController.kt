@@ -6,6 +6,7 @@ import main.kotlin.model.dto.EmployeeRequest
 import main.kotlin.model.dto.EmployeeResponse
 import main.kotlin.model.dto.ScheduleRequest
 import main.kotlin.model.dto.ScheduleResponse
+import main.kotlin.model.dto.Success
 import main.kotlin.model.dto.UserInfo
 import main.kotlin.net.Filters
 import main.kotlin.net.Registry
@@ -14,6 +15,7 @@ import org.http4k.core.Body
 import org.http4k.core.HttpHandler
 import org.http4k.core.Method
 import org.http4k.core.then
+import org.http4k.core.with
 import org.http4k.format.Jackson.auto
 import org.http4k.lens.Query
 import org.http4k.lens.int
@@ -49,6 +51,10 @@ object UserController {
     val limitLens = Query.int().defaulted("limit", 20)
     val uuidLens = Query.string().optional("uuid")
     val uuidRequiredLens = Query.string().required("uuid")
+
+    ////////////////////////// generic lenses
+
+    val successLens = Body.auto<Success>().toLens()
 
     fun routes(): RoutingHttpHandler {
 
@@ -100,16 +106,22 @@ object UserController {
             request.withUser {user ->
                 val offset = offsetLens(request)
                 val limit = limitLens(request)
-                val employeeUUID = uuidLens(request)
+                val employeeUUID = uuidRequiredLens(request)
 
                 val schedules = scheduleService.getSchedules(user, employeeUUID, limit, offset)
 
-                // val schedules = user.employees
-                //     .flatMap { employee ->
-                //         employee.schedules.map(Schedule::toDataClass)
-                //     }
-
                 schedulesResponse(schedules, Responses.OK)
+            }
+        }
+
+        val allSchedules: HttpHandler = Filters.AuthFilter.then { request ->
+            request.withUser { user ->
+                val offset = offsetLens(request)
+                val limit = limitLens(request)
+
+                val all = scheduleService.getAllSchedules(user, limit, offset)
+
+                schedulesResponse(all, Responses.OK)
             }
         }
 
@@ -130,13 +142,26 @@ object UserController {
             }
         }
 
+        val deleteSchedule: HttpHandler = Filters.AuthFilter.then {request ->
+            request.withUser {user ->
+                val uuid = uuidRequiredLens(request)
+
+                successLens(
+                    Success(scheduleService.deleteSchedule(user, uuid)),
+                    Responses.OK
+                )
+            }
+        }
+
         return routes(
             "/user" bind Method.GET to me,
             "/employee/list" bind Method.GET to employees,
             "/employee/single" bind Method.GET to employee,
             "/employee/create" bind Method.POST to createEmployee,
             "/schedule/list" bind Method.GET to schedules,
-            "/schedule/create" bind Method.POST to createSchedule
+            "/schedule/create" bind Method.POST to createSchedule,
+            "/schedule/all" bind Method.GET to allSchedules,
+            "/schedule/delete" bind Method.DELETE to deleteSchedule
         )
     }
 }

@@ -3,11 +3,8 @@ package main.kotlin.services
 import main.kotlin.model.db.Employee
 import main.kotlin.model.db.Employees
 import main.kotlin.model.db.User
-import main.kotlin.model.db.Users
 import main.kotlin.model.db.toDataClass
-import main.kotlin.model.dto.EmployeeRequest
 import main.kotlin.model.dto.EmployeeResponse
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -34,15 +31,17 @@ class EmployeeService {
     }.toDataClass()
 
     fun findByUUID(user: User, uuid: String) = transaction {
-        Employee.find { (Employees.uuid eq UUID.fromString(uuid)) and
-            (Employees.employer eq user.id) }.firstOrNull()
+        Employee.find {
+            (Employees.uuid eq UUID.fromString(uuid)) and
+                (Employees.employer eq user.id)
+        }.firstOrNull()
     }
 
-    fun getEmployees(user: User, limit: Int, offset: Long) : List<EmployeeResponse> {
+    fun getEmployees(user: User, limit: Int, offset: Long): List<EmployeeResponse> {
         return transaction {
             Employees.select {
                 Employees.employer eq user.id
-            }.limit(limit,offset)
+            }.limit(limit, offset)
         }.map { row ->
             val employer = User.findById(row[Employees.employer]) ?: return listOf()
 
